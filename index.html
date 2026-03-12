@@ -1031,15 +1031,34 @@ async function doImport() {
   if (!file) { showToast('ファイルを選んでください'); return; }
   const text = await file.text();
   const ext = file.name.split('.').pop().toLowerCase();
-  let count = 0;
+  let added = 0, updated = 0, skipped = 0;
   try {
+    // 既存データを全取得（重複チェック用）
+    const existing = await getAllItemsAll();
+
+    const upsertItem = async (tabName, title, content) => {
+      // 完全一致 → スキップ
+      const exact = existing.find(i => i.tab === tabName && i.title === title && i.content === content);
+      if (exact) { skipped++; return; }
+      // タイトル一致（同タブ内）→ 上書き
+      const same = existing.find(i => i.tab === tabName && i.title === title);
+      if (same) {
+        await updateItemDB(same.id, title, content);
+        same.content = content; // キャッシュも更新
+        updated++; return;
+      }
+      // 新規追加
+      const newId = await addItemDB(tabName, title, content);
+      existing.push({ id: newId, tab: tabName, title, content });
+      added++;
+    };
+
     if (ext === 'json') {
       const data = JSON.parse(text);
       for (const [tabName, itms] of Object.entries(data)) {
         if (!tabs.includes(tabName)) { tabs.push(tabName); }
         for (const item of (itms || [])) {
-          await addItemDB(tabName, item.title || '', item.content || '');
-          count++;
+          await upsertItem(tabName, item.title || '', item.content || '');
         }
       }
       await saveTabsDB(tabs);
@@ -1052,17 +1071,24 @@ async function doImport() {
         const [tabName, title, content] = cols;
         if (!tabName.trim()) continue;
         if (!tabs.includes(tabName)) { tabs.push(tabName); }
-        await addItemDB(tabName, title, content);
-        count++;
+        await upsertItem(tabName, title, content);
       }
       await saveTabsDB(tabs);
     } else {
       showToast('JSONまたはCSVファイルを選んでください'); return;
     }
+
     closeModal('importModal');
     document.getElementById('importFile').value = '';
     await loadTabs();
-    showToast(`${count}件を読み込みました`);
+    const msg = [`追加 ${added}件`];
+    if (updated) msg.push(`更新 ${updated}件`);
+    if (skipped) msg.push(`重複スキップ ${skipped}件`);
+    showToast(msg.join(' ／ '));
+  } catch(e) {
+    showToast('読み込みエラー: ' + e.message);
+  }
+}
   } catch(e) {
     showToast('読み込みエラー: ' + e.message);
   }
