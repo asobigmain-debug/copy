@@ -556,7 +556,28 @@ function openDB() {
       }
     };
     req.onsuccess = e => { db = e.target.result; resolve(db); };
-    req.onerror = () => reject(req.error);
+    req.onerror = () => {
+      // DBが壊れている場合は削除して再作成
+      console.warn('IndexedDB open failed, trying to delete and recreate...');
+      const delReq = indexedDB.deleteDatabase(DB_NAME);
+      delReq.onsuccess = () => {
+        const retryReq = indexedDB.open(DB_NAME, DB_VER);
+        retryReq.onupgradeneeded = e => {
+          const d = e.target.result;
+          const s = d.createObjectStore(STORE, { keyPath: 'id', autoIncrement: true });
+          s.createIndex('tab', 'tab', { unique: false });
+          d.createObjectStore(META_STORE, { keyPath: 'key' });
+        };
+        retryReq.onsuccess = e => { db = e.target.result; resolve(db); };
+        retryReq.onerror = () => reject(retryReq.error);
+      };
+      delReq.onerror = () => reject(req.error);
+    };
+    req.onblocked = () => {
+      // 他のタブが同じDBを開いている場合
+      console.warn('IndexedDB blocked');
+      reject(new Error('DBがブロックされています。他のタブを閉じてください。'));
+    };
   });
 }
 
@@ -641,7 +662,10 @@ function deleteItemDB(id) {
 // タブ一覧（メタストア）
 function getTabsDB() {
   return new Promise((resolve, reject) => {
-    const req = tx(META_STORE).objectStore(META_STORE).get('tabs');
+    log('META_STOREアクセス中…');
+    let t;
+    try { t = tx(META_STORE); } catch(e) { reject(e); return; }
+    const req = t.objectStore(META_STORE).get('tabs');
     req.onsuccess = () => resolve(req.result ? req.result.value : []);
     req.onerror = () => reject(req.error);
   });
@@ -669,12 +693,30 @@ window.addEventListener('load', async () => {
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
   }
-  await openDB();
+  try {
+    await openDB();
+  } catch(e) {
+    document.getElementById('itemsList').innerHTML = `<div class="empty-state">
+      <div class="empty-icon">⚠️</div>
+      <div class="empty-text">データベースエラー</div>
+      <div class="empty-sub" style="color:#c0392b;">${e.message || 'DBの初期化に失敗しました'}</div>
+      <button onclick="location.reload()" style="margin-top:16px;padding:8px 20px;background:#8b1a0e;color:white;border:none;border-radius:6px;font-size:14px;cursor:pointer;">再読み込み</button>
+    </div>`;
+    return;
+  }
   const title = getAppTitle();
   document.getElementById('appTitle').textContent = title;
   document.title = title;
+  log('loadTabs開始');
   await loadTabs();
+  log('loadTabs完了');
 });
+
+function log(msg) {
+  const el = document.getElementById('itemsList');
+  if (el) el.innerHTML = `<div style="padding:20px;font-size:13px;color:#666;">⏳ ${msg}</div>`;
+  console.log('[PWA]', msg);
+}
 
 // ===== タイトル編集 =====
 function startEditTitle() {
@@ -703,13 +745,16 @@ function startEditTitle() {
 
 // ===== タブ =====
 async function loadTabs() {
+  log('getTabsDB呼び出し中…');
   tabs = await getTabsDB();
+  log(`タブ取得完了: ${tabs.length}件`);
   if (!tabs.length) {
     tabs = ['YouTube', 'クラウド', 'GAS・アプリ', 'メール文面', 'その他'];
     await saveTabsDB(tabs);
   }
   if (!currentTab || !tabs.includes(currentTab)) currentTab = tabs[0];
   renderTabs();
+  log(`loadItems開始: ${currentTab}`);
   await loadItems();
 }
 
