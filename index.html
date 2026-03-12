@@ -42,13 +42,23 @@
   /* ===== ヘッダー ===== */
   .app-header {
     background: var(--shu-dark);
-    padding: calc(12px + var(--safe-top)) 16px 12px;
+    padding: calc(10px + var(--safe-top)) 14px 8px;
     display: flex;
-    align-items: center;
-    gap: 10px;
+    flex-direction: column;
+    gap: 8px;
     box-shadow: 0 2px 8px var(--shadow);
     flex-shrink: 0;
     z-index: 10;
+  }
+  .header-row1 {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .header-row2 {
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
   .app-title {
     font-family: 'Shippori Mincho', serif;
@@ -362,10 +372,14 @@
     position: absolute; left: -2px; top: 50%; transform: translateY(-50%);
     color: var(--cream-border); font-size: 13px; cursor: grab;
     padding: 4px 3px; line-height: 1; user-select: none;
-    opacity: 0; transition: opacity 0.14s;
+    opacity: 1;
+    transition: opacity 0.14s;
+  }
+  @media (hover: hover) {
+    .drag-handle { opacity: 0; }
+    .item-row:hover .drag-handle { opacity: 1; }
   }
   .item-row { position: relative; }
-  .item-row:hover .drag-handle { opacity: 1; }
   .item-row.dragging { opacity: 0.4; }
   .item-row.drag-over-top    { border-top:    2px solid var(--shu) !important; }
   .item-row.drag-over-bottom { border-bottom: 2px solid var(--shu) !important; }
@@ -442,12 +456,16 @@
 <body>
 
 <header class="app-header">
-  <span class="app-title" id="appTitle" onclick="startEditTitle()">マイノート</span>
-  <div class="search-wrap">
-    <input class="search-input" id="searchInput" type="text" placeholder="検索…" oninput="onSearchInput()">
+  <div class="header-row1">
+    <span class="app-title" id="appTitle" onclick="startEditTitle()">マイノート</span>
+    <div class="search-wrap">
+      <input class="search-input" id="searchInput" type="text" placeholder="検索…" oninput="onSearchInput()">
+    </div>
   </div>
-  <button class="btn-header" onclick="openModal('exportModal')">書出</button>
-  <button class="btn-header" onclick="openModal('importModal')">読込</button>
+  <div class="header-row2">
+    <button class="btn-header" onclick="openModal('exportModal')">📄 書き出し</button>
+    <button class="btn-header" onclick="openModal('importModal')">📥 読み込み</button>
+  </div>
 </header>
 
 <div class="tabs-bar" id="tabsBar"></div>
@@ -701,7 +719,6 @@ function renderTabs() {
   tabs.forEach(name => {
     const btn = document.createElement('button');
     btn.className = 'tab-btn' + (name === currentTab ? ' active' : '');
-    btn.draggable = true;
     btn.dataset.tab = name;
     const label = document.createElement('span');
     label.textContent = name;
@@ -710,39 +727,15 @@ function renderTabs() {
     editIco.addEventListener('click', e => { e.stopPropagation(); openEditTabModal(name); });
     btn.appendChild(label); btn.appendChild(editIco);
     btn.addEventListener('click', () => switchTab(name));
-
-    btn.addEventListener('dragstart', e => {
-      e.dataTransfer.setData('tab', name);
-      e.dataTransfer.effectAllowed = 'move';
-    });
-    btn.addEventListener('dragover', e => {
-      e.preventDefault();
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('drag-over-left','drag-over-right'));
-      const rect = btn.getBoundingClientRect();
-      btn.classList.add(e.clientX < rect.left + rect.width / 2 ? 'drag-over-left' : 'drag-over-right');
-    });
-    btn.addEventListener('dragleave', () => btn.classList.remove('drag-over-left','drag-over-right'));
-    btn.addEventListener('drop', async e => {
-      e.preventDefault();
-      btn.classList.remove('drag-over-left','drag-over-right');
-      const dragName = e.dataTransfer.getData('tab');
-      if (!dragName || dragName === name) return;
-      const rect = btn.getBoundingClientRect();
-      const fromIdx = tabs.indexOf(dragName);
-      tabs.splice(fromIdx, 1);
-      let toIdx = tabs.indexOf(name);
-      if (e.clientX >= rect.left + rect.width / 2) toIdx += 1;
-      tabs.splice(toIdx, 0, dragName);
-      await saveTabsDB(tabs);
-      renderTabs();
-    });
-
     bar.appendChild(btn);
   });
   const addBtn = document.createElement('button');
   addBtn.className = 'tab-add-btn'; addBtn.textContent = '＋';
   addBtn.onclick = openAddTabModal;
   bar.appendChild(addBtn);
+
+  // タブのタッチソート
+  setupTabTouchSort(bar);
 }
 
 async function switchTab(name) {
@@ -771,58 +764,26 @@ function renderItems(list, isSearch = false) {
   }
   container.innerHTML = '';
   list.forEach(item => container.appendChild(createRow(item, isSearch)));
+  if (!isSearch) setupRowTouchSort(container);
 }
 
 function createRow(item, showTab = false) {
   const row = document.createElement('div');
   row.className = 'item-row';
   row.id = `row-${item.id}`;
-  row.draggable = true;
   row.dataset.id = item.id;
 
   const isLong = item.content && item.content.length > 100;
   const hasContent = !!(item.content && item.content.trim());
 
-  // ドラッグハンドル
+  // ドラッグハンドル（タッチ長押しで行ソート）
   const handle = document.createElement('span');
   handle.className = 'drag-handle';
   handle.textContent = '⋮⋮';
+  handle.setAttribute('touch-action', 'none');
   row.appendChild(handle);
 
-  row.addEventListener('dragstart', e => {
-    e.dataTransfer.setData('rowId', String(item.id));
-    e.dataTransfer.effectAllowed = 'move';
-    setTimeout(() => row.classList.add('dragging'), 0);
-  });
-  row.addEventListener('dragend', () => {
-    row.classList.remove('dragging');
-    document.querySelectorAll('.item-row').forEach(r => r.classList.remove('drag-over-top','drag-over-bottom'));
-  });
-  row.addEventListener('dragover', e => {
-    e.preventDefault();
-    document.querySelectorAll('.item-row').forEach(r => r.classList.remove('drag-over-top','drag-over-bottom'));
-    const rect = row.getBoundingClientRect();
-    row.classList.add(e.clientY < rect.top + rect.height / 2 ? 'drag-over-top' : 'drag-over-bottom');
-  });
-  row.addEventListener('dragleave', () => row.classList.remove('drag-over-top','drag-over-bottom'));
-  row.addEventListener('drop', async e => {
-    e.preventDefault();
-    row.classList.remove('drag-over-top','drag-over-bottom');
-    const fromId = parseInt(e.dataTransfer.getData('rowId'));
-    if (!fromId || fromId === item.id) return;
-    const list = isSearching ? searchResults : items;
-    const fromIdx = list.findIndex(i => i.id === fromId);
-    if (fromIdx < 0) return;
-    const rect = row.getBoundingClientRect();
-    const moved = list.splice(fromIdx, 1)[0];
-    let toIdx = list.findIndex(i => i.id === item.id);
-    if (e.clientY >= rect.top + rect.height / 2) toIdx += 1;
-    list.splice(toIdx, 0, moved);
-    if (!isSearching) items = list; else searchResults = list;
-    // IndexedDBの順序を保存（sortOrderフィールドを更新）
-    await saveItemOrder(list);
-    renderItems(list, isSearching);
-  });
+  // タッチソートはsetupRowTouchSortで一括処理
 
   // タイトル
   const cellT = document.createElement('div');
@@ -1127,6 +1088,127 @@ function closeModal(id) { document.getElementById(id).classList.remove('open'); 
 document.querySelectorAll('.modal-overlay').forEach(el => {
   el.addEventListener('click', e => { if (e.target === el) closeModal(el.id); });
 });
+
+// ===== タッチソート（タブ） =====
+function setupTabTouchSort(bar) {
+  let dragging = null, startX = 0, placeholder = null;
+
+  bar.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('touchstart', e => {
+      dragging = btn;
+      startX = e.touches[0].clientX;
+      btn.style.opacity = '0.5';
+    }, { passive: true });
+
+    btn.addEventListener('touchmove', e => {
+      if (!dragging) return;
+      e.preventDefault();
+      const tx = e.touches[0].clientX;
+      const allBtns = [...bar.querySelectorAll('.tab-btn')];
+      allBtns.forEach(b => b.classList.remove('drag-over-left','drag-over-right'));
+      const target = allBtns.find(b => {
+        const r = b.getBoundingClientRect();
+        return tx >= r.left && tx <= r.right && b !== dragging;
+      });
+      if (target) target.classList.add(tx < target.getBoundingClientRect().left + target.getBoundingClientRect().width / 2 ? 'drag-over-left' : 'drag-over-right');
+    }, { passive: false });
+
+    btn.addEventListener('touchend', async e => {
+      if (!dragging) return;
+      dragging.style.opacity = '';
+      const tx = e.changedTouches[0].clientX;
+      const allBtns = [...bar.querySelectorAll('.tab-btn')];
+      allBtns.forEach(b => b.classList.remove('drag-over-left','drag-over-right'));
+      const target = allBtns.find(b => {
+        const r = b.getBoundingClientRect();
+        return tx >= r.left && tx <= r.right && b !== dragging;
+      });
+      if (target) {
+        const dragName = dragging.dataset.tab;
+        const targetName = target.dataset.tab;
+        const rect = target.getBoundingClientRect();
+        const fromIdx = tabs.indexOf(dragName);
+        tabs.splice(fromIdx, 1);
+        let toIdx = tabs.indexOf(targetName);
+        if (tx >= rect.left + rect.width / 2) toIdx += 1;
+        tabs.splice(toIdx, 0, dragName);
+        await saveTabsDB(tabs);
+        renderTabs();
+      }
+      dragging = null;
+    });
+  });
+}
+
+// ===== タッチソート（行） =====
+function setupRowTouchSort(container) {
+  let draggingRow = null, ghost = null, startY = 0, scrollArea = document.getElementById('scrollArea');
+
+  container.querySelectorAll('.drag-handle').forEach(handle => {
+    handle.addEventListener('touchstart', e => {
+      e.stopPropagation();
+      draggingRow = handle.closest('.item-row');
+      startY = e.touches[0].clientY;
+      draggingRow.classList.add('dragging');
+
+      // ゴースト（視覚的なコピー）
+      ghost = draggingRow.cloneNode(true);
+      ghost.style.cssText = `position:fixed;left:${draggingRow.getBoundingClientRect().left}px;top:${draggingRow.getBoundingClientRect().top}px;width:${draggingRow.offsetWidth}px;opacity:0.7;pointer-events:none;z-index:999;background:white;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.18);`;
+      document.body.appendChild(ghost);
+    }, { passive: true });
+
+    handle.addEventListener('touchmove', e => {
+      if (!draggingRow || !ghost) return;
+      e.preventDefault();
+      const ty = e.touches[0].clientY;
+      const dy = ty - startY;
+      const origTop = draggingRow.getBoundingClientRect().top;
+      ghost.style.top = (origTop + dy) + 'px';
+
+      const rows = [...container.querySelectorAll('.item-row:not(.dragging)')];
+      rows.forEach(r => r.classList.remove('drag-over-top','drag-over-bottom'));
+      const over = rows.find(r => {
+        const rect = r.getBoundingClientRect();
+        return ty >= rect.top && ty <= rect.bottom;
+      });
+      if (over) {
+        const rect = over.getBoundingClientRect();
+        over.classList.add(ty < rect.top + rect.height / 2 ? 'drag-over-top' : 'drag-over-bottom');
+      }
+    }, { passive: false });
+
+    handle.addEventListener('touchend', async e => {
+      if (!draggingRow) return;
+      const ty = e.changedTouches[0].clientY;
+      draggingRow.classList.remove('dragging');
+      if (ghost) { ghost.remove(); ghost = null; }
+
+      const rows = [...container.querySelectorAll('.item-row:not(.dragging)')];
+      rows.forEach(r => r.classList.remove('drag-over-top','drag-over-bottom'));
+
+      const over = rows.find(r => {
+        const rect = r.getBoundingClientRect();
+        return ty >= rect.top && ty <= rect.bottom;
+      });
+
+      if (over && over !== draggingRow) {
+        const fromId = parseInt(draggingRow.dataset.id);
+        const toId = parseInt(over.dataset.id);
+        const list = isSearching ? searchResults : items;
+        const fromIdx = list.findIndex(i => i.id === fromId);
+        const toItemRect = over.getBoundingClientRect();
+        const moved = list.splice(fromIdx, 1)[0];
+        let toIdx = list.findIndex(i => i.id === toId);
+        if (ty >= toItemRect.top + toItemRect.height / 2) toIdx += 1;
+        list.splice(toIdx, 0, moved);
+        if (!isSearching) items = list; else searchResults = list;
+        await saveItemOrder(list);
+        renderItems(list, isSearching);
+      }
+      draggingRow = null;
+    });
+  });
+}
 
 // ===== トースト =====
 let toastTimer;
