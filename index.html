@@ -1089,18 +1089,30 @@ document.querySelectorAll('.modal-overlay').forEach(el => {
   el.addEventListener('click', e => { if (e.target === el) closeModal(el.id); });
 });
 
-// ===== タッチソート（タブ） =====
+// ===== タッチソート（タブ）- 長押しで発動 =====
 function setupTabTouchSort(bar) {
-  let dragging = null, startX = 0, placeholder = null;
+  let dragging = null, longPressTimer = null, startX = 0;
+  const LONG_PRESS = 500; // ms
 
   bar.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('touchstart', e => {
-      dragging = btn;
       startX = e.touches[0].clientX;
-      btn.style.opacity = '0.5';
+      longPressTimer = setTimeout(() => {
+        dragging = btn;
+        btn.style.opacity = '0.5';
+        // 長押し開始をフィードバック
+        if (navigator.vibrate) navigator.vibrate(30);
+      }, LONG_PRESS);
     }, { passive: true });
 
     btn.addEventListener('touchmove', e => {
+      const dx = Math.abs(e.touches[0].clientX - startX);
+      // 少しでも動いたら長押しキャンセル（通常スクロール優先）
+      if (dx > 5) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+        if (!dragging) return;
+      }
       if (!dragging) return;
       e.preventDefault();
       const tx = e.touches[0].clientX;
@@ -1110,10 +1122,15 @@ function setupTabTouchSort(bar) {
         const r = b.getBoundingClientRect();
         return tx >= r.left && tx <= r.right && b !== dragging;
       });
-      if (target) target.classList.add(tx < target.getBoundingClientRect().left + target.getBoundingClientRect().width / 2 ? 'drag-over-left' : 'drag-over-right');
+      if (target) {
+        const r = target.getBoundingClientRect();
+        target.classList.add(tx < r.left + r.width / 2 ? 'drag-over-left' : 'drag-over-right');
+      }
     }, { passive: false });
 
     btn.addEventListener('touchend', async e => {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
       if (!dragging) return;
       dragging.style.opacity = '';
       const tx = e.changedTouches[0].clientX;
@@ -1134,8 +1151,16 @@ function setupTabTouchSort(bar) {
         tabs.splice(toIdx, 0, dragName);
         await saveTabsDB(tabs);
         renderTabs();
+        showToast('タブを並び替えました');
       }
       dragging = null;
+    });
+
+    btn.addEventListener('touchcancel', () => {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+      if (dragging) { dragging.style.opacity = ''; dragging = null; }
+      bar.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('drag-over-left','drag-over-right'));
     });
   });
 }
